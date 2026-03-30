@@ -1,0 +1,17 @@
+# Ignore everything by default
+*
+
+# Allow specific folders
+!agents/
+!agents/**
+!skills/
+!skills/**
+!commands/
+!commands/**
+!rules/
+!rules/**
+!.gitignore
+
+# Exclude Zone.Identifier files (Windows artifacts)
+*.Zone.Identifier
+**/*.Zone.Identifier
