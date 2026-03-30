@@ -15,3 +15,5 @@
 # Exclude Zone.Identifier files (Windows artifacts)
 *.Zone.Identifier
 **/*.Zone.Identifier
+agents/market-analyst-sme.md:Zone.Identifier
+agents/consumer-spending-sme.md:Zone.Identifier
