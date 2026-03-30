@@ -161,6 +161,78 @@ For each step, the orchestrator:
 
 Steps are **sequential** — each step may depend on files created in prior steps.
 
+## Phase 1.5 — Code Review (Automated)
+
+After all Phase 1 specialist agent Agents complete, run a review-fix loop before Phase 2 Full Verification.
+
+### Step 1 — Collect generated files
+
+Gather the full contents of every test file and implementation file created in Phase 1. Store them as a concatenated string for the reviewer prompt.
+
+### Step 2 — Launch code-reviewer subagent
+
+Spawn an Agent with:
+- `subagent_type: "code-reviewer"`
+- `model: sonnet`
+
+Prompt includes:
+- Full contents of all generated files (test + implementation)
+- Content of `~/.claude/rules/coding-style.md`:
+  - **Immutability**: Always create new objects, never mutate
+  - **File size**: 200-400 lines typical, 800 max; extract utilities from large components
+  - **Naming**: Functions <50 lines, files focused <800 lines, no deep nesting >4 levels
+  - **No console.log statements**
+  - **No hardcoded values**
+- Review focus: correctness, code style/patterns, test quality
+- Instruction: "Flag issues only in the files provided. Do not flag issues in imported stubs or external dependencies. Return structured feedback as a numbered list with file path, line range, issue type, and recommended fix."
+- Context7 instruction: "You have access to the Context7 MCP server (`mcp__plugin_context7_context7__resolve-library-id` and `mcp__plugin_context7_context7__query-docs`). Use it to look up current library documentation when verifying correctness of API usage, framework patterns, or library-specific conventions — especially before flagging something as incorrect that may simply be an unfamiliar but valid pattern."
+
+### Step 3 — Evaluate feedback
+
+- If the reviewer returns no actionable items → skip to Phase 2 (Full Verification)
+- If feedback exists → proceed to Step 4
+
+### Step 4 — Route feedback to fix agent (cycle 1)
+
+For each file with feedback, determine the domain and corresponding specialist `subagent_type`. Launch a fix Agent with:
+- `subagent_type`: same specialist type that originally wrote the file
+- `model: sonnet`
+- Prompt includes:
+  - All reviewer feedback items for this file
+  - Full current content of the file (test + implementation)
+  - FR requirements for this file (from unit definition)
+  - Exact test commands
+  - Instruction: "Apply the reviewer's feedback. Do not change test assertions unless the test is using an incorrect library API (add a comment if so). Re-run tests after fixing."
+
+### Step 5 — Re-run full test suite
+
+Run all tests using the exact Phase 2 commands. Check pass/fail status.
+
+### Step 6 — Cycle 2 (if needed)
+
+If issues remain:
+- Re-launch code-reviewer subagent with updated file contents
+- If new actionable feedback → launch fix agent again (cycle 2)
+- Re-run full test suite
+
+### Step 7 — Cap check
+
+After 2 cycles, if unresolved feedback or failing tests remain:
+- Display to the user:
+  - Outstanding reviewer feedback (numbered list)
+  - Failing test names and error summaries
+  - Which files need attention
+- Halt and await user instruction
+
+### Code Review State
+
+Track across cycles:
+```
+code_review_cycles: 0
+code_review_issues_found: 0
+code_review_issues_resolved: 0
+```
+
 ## Phase 2 — Full Verification
 
 After all specialist agent Agents complete:
@@ -208,6 +280,16 @@ Unit <N> Implementation Report
 ==============================
 
 Status: PASS | PARTIAL | FAIL
+
+Code Review:
+  Cycles run:      <0–2>
+  Issues found:    <count>
+  Issues resolved: <count>
+
+[If unresolved issues:]
+Unresolved Review Feedback:
+  1. <file-path> L<line>: <issue-type> — <summary>
+     Recommended fix: <brief>
 
 Tests:
   Total:    <count>
