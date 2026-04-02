@@ -44,27 +44,36 @@ timestamp_display() {
     date "+%Y-%m-%d %H:%M:%S %Z"
 }
 
+strip_ansi() {
+    # Remove ANSI escape codes (color, bold, etc.) from output
+    sed 's/\x1B\[[0-9;]*[a-zA-Z]//g; s/\x1B\[[0-9]*m//g; s/\x1B(B//g'
+}
+
 parse_node_coverage() {
-    local output="$1"
-    # Extract overall coverage % from typical Jest/Vitest output
+    local output
+    output="$(echo "$1" | strip_ansi)"
     # Jest: "All files | XX.XX | ..."
-    # Vitest: "% Stmts | ..."
+    # Vitest: "% Stmts | ..." or coverage summary table
     local pct
-    pct="$(echo "$output" | grep -E 'All files\s*\|' | awk -F'|' '{print $2}' | tr -d ' %' | head -1)"
-    [[ -z "$pct" ]] && pct="$(echo "$output" | grep -E '^\s*All files' | grep -oP '\d+\.\d+' | head -1)"
+    pct="$(echo "$output" | grep -E 'All files\s*\|' | awk -F'|' '{gsub(/ /,"",$2); print $2}' | tr -d '%' | head -1)"
+    [[ -z "$pct" ]] && pct="$(echo "$output" | grep -E '^\s*All files' | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)"
+    # Vitest v8 coverage: "Coverage report from v8"
+    [[ -z "$pct" ]] && pct="$(echo "$output" | grep -iE '^\s*all\s*\|' | awk -F'|' '{gsub(/ /,"",$2); print $2}' | tr -d '%' | head -1)"
     echo "${pct:-N/A}"
 }
 
 parse_dotnet_coverage() {
-    local output="$1"
+    local output
+    output="$(echo "$1" | strip_ansi)"
     # dotnet test coverage: "Line coverage: XX.X%"
     local pct
-    pct="$(echo "$output" | grep -iE 'line coverage' | grep -oP '\d+\.?\d*' | head -1)"
+    pct="$(echo "$output" | grep -iE 'line coverage' | grep -oE '[0-9]+\.?[0-9]*' | head -1)"
     echo "${pct:-N/A}"
 }
 
 parse_python_coverage() {
-    local output="$1"
+    local output
+    output="$(echo "$1" | strip_ansi)"
     # pytest-cov: "TOTAL    ...   XX%"
     local pct
     pct="$(echo "$output" | grep -E '^TOTAL\s' | awk '{print $NF}' | tr -d '%')"
@@ -72,34 +81,39 @@ parse_python_coverage() {
 }
 
 parse_node_counts() {
-    local output="$1"
+    local output
+    output="$(echo "$1" | strip_ansi)"
     # Jest: "Tests: X failed, Y passed, Z total" or "X passed, Z total"
-    # Vitest: "✓ X | ✗ Y"
+    # Vitest: "✓ X passed | ✗ Y failed" or "X tests passed"
     local passed failed
-    passed="$(echo "$output" | grep -oP '(\d+) passed' | grep -oP '\d+' | tail -1)"
-    failed="$(echo "$output" | grep -oP '(\d+) failed' | grep -oP '\d+' | tail -1)"
+    passed="$(echo "$output" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | tail -1)"
+    failed="$(echo "$output" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' | tail -1)"
+    # Vitest summary line: "X tests | Y passed | ..."
+    [[ -z "$passed" ]] && passed="$(echo "$output" | grep -iE 'tests?\s*\|' | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | tail -1)"
     passed="${passed:-0}"
     failed="${failed:-0}"
     echo "${passed}:${failed}"
 }
 
 parse_dotnet_counts() {
-    local output="$1"
+    local output
+    output="$(echo "$1" | strip_ansi)"
     # "Passed: X, Failed: Y, Skipped: Z"
     local passed failed
-    passed="$(echo "$output" | grep -oiP 'passed:\s*\K\d+'| tail -1)"
-    failed="$(echo "$output" | grep -oiP 'failed:\s*\K\d+' | tail -1)"
+    passed="$(echo "$output" | grep -iE 'passed:\s*[0-9]+' | grep -oE '[0-9]+' | tail -1)"
+    failed="$(echo "$output" | grep -iE 'failed:\s*[0-9]+' | grep -oE '[0-9]+' | tail -1)"
     passed="${passed:-0}"
     failed="${failed:-0}"
     echo "${passed}:${failed}"
 }
 
 parse_python_counts() {
-    local output="$1"
-    # "X passed, Y failed" or "X passed"
+    local output
+    output="$(echo "$1" | strip_ansi)"
+    # pytest: "X passed, Y failed" or "X passed" or "=== X passed ==="
     local passed failed
-    passed="$(echo "$output" | grep -oP '(\d+) passed' | grep -oP '\d+' | tail -1)"
-    failed="$(echo "$output" | grep -oP '(\d+) failed' | grep -oP '\d+' | tail -1)"
+    passed="$(echo "$output" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | tail -1)"
+    failed="$(echo "$output" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' | tail -1)"
     passed="${passed:-0}"
     failed="${failed:-0}"
     echo "${passed}:${failed}"

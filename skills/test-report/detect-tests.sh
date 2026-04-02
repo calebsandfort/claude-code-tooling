@@ -66,9 +66,14 @@ detect_node_project() {
 detect_dotnet_project() {
     local dir="$1"
 
-    # Look for *.Test.csproj files in the directory tree (non-recursive from dir)
+    # Look for *.Test.csproj or *.Tests.csproj files in the directory tree
     local csproj
-    csproj="$(find "$dir" -maxdepth 3 -name "*.Test.csproj" -not -path "*/obj/*" -not -path "*/bin/*" 2>/dev/null | head -1)"
+    csproj="$(find "$dir" -maxdepth 4 \( -name "*.Test.csproj" -o -name "*.Tests.csproj" \) -not -path "*/obj/*" -not -path "*/bin/*" 2>/dev/null | head -1)"
+
+    # Also look for any .csproj inside a Tests/ or tests/ folder
+    if [[ -z "$csproj" ]]; then
+        csproj="$(find "$dir" -maxdepth 5 -name "*.csproj" \( -path "*/Tests/*" -o -path "*/tests/*" \) -not -path "*/obj/*" -not -path "*/bin/*" 2>/dev/null | head -1)"
+    fi
 
     [[ -n "$csproj" ]] || return 1
 
@@ -96,6 +101,23 @@ detect_python_project() {
     [[ -f "$dir/pyproject.toml" ]] && grep -q "\[tool.pytest" "$dir/pyproject.toml" 2>/dev/null && has_pytest=true
     [[ -f "$dir/setup.py" ]] && has_pytest=true
 
+    # Detect tests/ or Tests/ directory containing Python test files
+    if ! $has_pytest; then
+        local tests_dir=""
+        [[ -d "$dir/tests" ]] && tests_dir="$dir/tests"
+        [[ -d "$dir/Tests" ]] && tests_dir="$dir/Tests"
+        if [[ -n "$tests_dir" ]]; then
+            find "$tests_dir" -maxdepth 3 \( -name "test_*.py" -o -name "*_test.py" \) 2>/dev/null | grep -q . && has_pytest=true
+        fi
+    fi
+
+    # Detect pytest listed in requirements files
+    if ! $has_pytest; then
+        for req_file in "$dir/requirements.txt" "$dir/requirements-dev.txt" "$dir/requirements-test.txt"; do
+            [[ -f "$req_file" ]] && grep -qi "^pytest" "$req_file" 2>/dev/null && has_pytest=true && break
+        done
+    fi
+
     $has_pytest || return 1
 
     local python_cmd="python"
@@ -113,12 +135,41 @@ detect_python_project() {
     return 0
 }
 
+detect_makefile_project() {
+    local dir="$1"
+
+    [[ -f "$dir/Makefile" ]] || return 1
+
+    # Must have a "test" target
+    grep -q '^test:' "$dir/Makefile" 2>/dev/null || return 1
+
+    # Infer project type from Makefile content
+    local proj_type="unknown"
+    if grep -qE 'pytest|uv run|python' "$dir/Makefile" 2>/dev/null; then
+        proj_type="python"
+    elif grep -qE 'dotnet' "$dir/Makefile" 2>/dev/null; then
+        proj_type="dotnet"
+    elif grep -qE 'jest|vitest|npm|pnpm|yarn' "$dir/Makefile" 2>/dev/null; then
+        proj_type="node"
+    fi
+
+    local test_cmd="make test"
+    local coverage_cmd="none"
+    grep -q '^test-cov:' "$dir/Makefile" 2>/dev/null && coverage_cmd="make test-cov"
+
+    echo "${proj_type}:${dir}:${test_cmd}:${coverage_cmd}"
+    return 0
+}
+
 scan_folder() {
     local folder="$1"
 
     [[ -d "$folder" ]] || return 0
 
-    # Try detecting at the folder root level first
+    # Prefer Makefile-based detection at the folder root
+    detect_makefile_project "$folder" && return 0
+
+    # Fall back to framework-specific detection at the folder root
     detect_node_project "$folder" && return 0
     detect_dotnet_project "$folder" && return 0
     detect_python_project "$folder" && return 0
@@ -127,6 +178,7 @@ scan_folder() {
     while IFS= read -r -d '' subdir; do
         is_excluded "$subdir" && continue
 
+        detect_makefile_project "$subdir" 2>/dev/null && continue
         detect_node_project "$subdir" 2>/dev/null && continue
         detect_dotnet_project "$subdir" 2>/dev/null && continue
         detect_python_project "$subdir" 2>/dev/null && continue
