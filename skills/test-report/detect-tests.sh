@@ -81,10 +81,11 @@ detect_dotnet_project() {
     proj_dir="$(dirname "$csproj")"
     local test_cmd="dotnet test \"${csproj}\""
 
-    # Coverage: check for coverlet or built-in coverage
+    # Coverage: use dotnet-coverage (preferred) or coverlet if dotnet-coverage unavailable
     local coverage_cmd="none"
-    if grep -q -i "coverlet\|coverage" "$csproj" 2>/dev/null; then
-        coverage_cmd="dotnet test \"${csproj}\" --collect:\"XPlat Code Coverage\""
+    if grep -q -i "coverlet\|CollectCoverage\|Microsoft.NET.Test.Sdk" "$csproj" 2>/dev/null; then
+        # Use dotnet-coverage collect for reliable coverage on .NET 10+
+        coverage_cmd="dotnet-coverage collect 'dotnet test \"${csproj}\"' -o './TestResults/coverage.cobertura.xml' -f cobertura"
     fi
 
     echo "dotnet:${proj_dir}:${test_cmd}:${coverage_cmd}"

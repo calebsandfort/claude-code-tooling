@@ -63,11 +63,20 @@ parse_node_coverage() {
 }
 
 parse_dotnet_coverage() {
-    local output
+    local output proj_path
     output="$(echo "$1" | strip_ansi)"
-    # dotnet test coverage: "Line coverage: XX.X%"
-    local pct
-    pct="$(echo "$output" | grep -iE 'line coverage' | grep -oE '[0-9]+\.?[0-9]*' | head -1)"
+    proj_path="$2"
+    # coverlet writes to coverage.cobertura.xml, not stdout
+    # Try the most recent file in TestResults
+    local xml_file pct
+    xml_file="$(find "$proj_path/TestResults" -name "coverage.cobertura.xml" -type f 2>/dev/null | sort -r | head -1)"
+    if [[ -f "$xml_file" ]]; then
+        pct="$(grep -oE 'line-rate="[0-9]+\.?[0-9]*"' "$xml_file" 2>/dev/null | head -1 | grep -oE '[0-9]+\.?[0-9]*')"
+        if [[ -n "$pct" ]]; then
+            # line-rate is a decimal (0.0 to 1.0), convert to percentage
+            pct="$(echo "$pct * 100" | bc 2>/dev/null | cut -d. -f1)"
+        fi
+    fi
     echo "${pct:-N/A}"
 }
 
@@ -98,10 +107,13 @@ parse_node_counts() {
 parse_dotnet_counts() {
     local output
     output="$(echo "$1" | strip_ansi)"
-    # "Passed: X, Failed: Y, Skipped: Z"
+    # "Passed!  - Failed:     0, Passed:    48, Skipped:     0, Total:    48"
+    # Note: use " *" instead of "\s*" — bash history expansion escapes ! as \!
+    # in captured output, and \s* (zero-or-more whitespace) can fail to match
+    # multi-space gaps that " *" (zero-or-more literal spaces) handles correctly
     local passed failed
-    passed="$(echo "$output" | grep -iE 'passed:\s*[0-9]+' | grep -oE '[0-9]+' | tail -1)"
-    failed="$(echo "$output" | grep -iE 'failed:\s*[0-9]+' | grep -oE '[0-9]+' | tail -1)"
+    passed="$(echo "$output" | grep -oE 'Passed: *[0-9]+' | grep -oE '[0-9]+' | tail -1)"
+    failed="$(echo "$output" | grep -oE 'Failed: *[0-9]+' | grep -oE '[0-9]+' | tail -1)"
     passed="${passed:-0}"
     failed="${failed:-0}"
     echo "${passed}:${failed}"
@@ -189,7 +201,7 @@ for project_entry in "${PROJECTS[@]}"; do
             ;;
         dotnet)
             counts="$(parse_dotnet_counts "$output")"
-            coverage="$(parse_dotnet_coverage "$output")"
+            coverage="$(parse_dotnet_coverage "$output" "$proj_path")"
             ;;
         python)
             counts="$(parse_python_counts "$output")"
